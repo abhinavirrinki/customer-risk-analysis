@@ -1,0 +1,13 @@
+services:
+  db:
+    image: ankane/pgvector
+    environment:
+      POSTGRES_USER: risk
+      POSTGRES_PASSWORD: risk
+      POSTGRES_DB: risk_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
