@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from pgvector.psycopg import register_vector
 
+
 load_dotenv()
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -74,7 +75,7 @@ async def search(req: SearchRequest):
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, customer_id, text FROM cases ORDER BY embedding <-> %s::vector LIMIT %s",
-                (embedding, req.limit),
+        (embedding, req.limit),
             )
             rows = cur.fetchall()
         return [SearchResult(id=r[0], customer_id=r[1], text=r[2]) for r in rows]
