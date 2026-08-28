@@ -4,3 +4,5 @@ httpx
 psycopg[binary]
 python-dotenv
 pgvector
+pdfplumber
+python-multipart

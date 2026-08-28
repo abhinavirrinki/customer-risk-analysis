@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Risk Analysis Assistant</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideInRight { from { opacity: 0; transform: translateX(40px);} to { opacity: 1; transform: translateX(0);} }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px);} to { opacity: 1; transform: translateY(0);} }
+        .anim-fade { animation: fadeIn 0.4s ease-out; }
+        .anim-slide { animation: slideDown 0.35s ease-out; }
+        .anim-note { animation: slideInRight 0.4s ease-out; }
+        .spotlight-overlay {
+            position: fixed; inset: 0; background: rgba(15,15,20,0.55);
+            backdrop-filter: blur(8px); display: flex; align-items: flex-start;
+            justify-content: center; padding-top: 18vh; z-index: 50;
+            transition: opacity 0.35s ease, backdrop-filter 0.35s ease;
+        }
+        .spotlight-hidden { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+        const CUSTOMER_IDS = ["C001", "C002", "C003", "C004", "C005", "C006", "C007", "C008"];
+        const NOTE_TRIGGER = /\b(note|write.*down|jot|remember that)\b/i;
+
+        function App() {
+            const [caption, setCaption] = useState(null);
+            const [mode, setMode] = useState('idle'); // idle | customer | document
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState(null);
+
+            const [riskData, setRiskData] = useState(null);
+            const [docResult, setDocResult] = useState(null);
+            const [docHistory, setDocHistory] = useState([]);
+
+            const [inputValue, setInputValue] = useState("");
+            const [hasAsked, setHasAsked] = useState(false);
+
+            const [noteOpen, setNoteOpen] = useState(false);
+            const [noteFull, setNoteFull] = useState("");
+            const [noteDisplayed, setNoteDisplayed] = useState("");
+
+            const pdfIframeRef = useRef(null);
+
+            const lastAnswerText = () => {
+                if (mode === 'document' && docHistory.length) {
+                    const lastAi = [...docHistory].reverse().find(m => m.role === 'ai');
+                    return lastAi ? lastAi.text : null;
+                }
+                if (mode === 'customer' && riskData) return riskData.explanation;
+                return null;
+            };
+
+            const detectIntent = (text) => {
+                if (NOTE_TRIGGER.test(text) && lastAnswerText()) return { type: 'note' };
+                const upper = text.toUpperCase();
+                const foundId = CUSTOMER_IDS.find(id => upper.includes(id));
+                if (foundId) return { type: 'customer', customerId: foundId };
+                return { type: 'document' };
+            };
+
+            const runCustomerQuery = async (customerId) => {
+                setCaption(`Alright — pulling up risk records for ${customerId}...`);
+                setMode('customer');
+                setLoading(true);
+                setError(null);
+                setRiskData(null);
+                try {
+                    const res = await fetch(`http://localhost:8000/explain/${customerId}`);
+                    if (!res.ok) throw new Error("Couldn't fetch that customer's records");
+                    const data = await res.json();
+                    setRiskData(data);
+                    setCaption(`Here's the risk analysis for ${customerId}.`);
+                } catch (err) {
+                    setError(err.message);
+                    setCaption(`Something went wrong pulling up ${customerId}.`);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const runDocQuery = async (query) => {
+                setCaption(`Alright — searching the documents...`);
+                setMode('document');
+                setLoading(true);
+                setError(null);
+                const newHistory = [...docHistory, { role: 'user', text: query }];
+                setDocHistory(newHistory);
+                try {
+                    const res = await fetch('http://localhost:8000/ask_doc', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query, history: newHistory.slice(-6) })
+                    });
+                    if (!res.ok) throw new Error("Couldn't find anything relevant");
+                    const data = await res.json();
+                    setDocResult(data);
+                    setDocHistory(h => [...h, { role: 'ai', text: data.answer }]);
+                    setCaption(`Found it in ${data.doc_name}, page ${data.page_number}.`);
+                } catch (err) {
+                    setError(err.message);
+                    setCaption(`Couldn't find anything relevant in the documents.`);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const runNote = (userQuery) => {
+                const text = lastAnswerText();
+                setCaption(`Alright — noting that down...`);
+                setNoteFull(text);
+                setNoteDisplayed("");
+                setNoteOpen(true);
+            };
+
+            // typewriter effect for the note
+            useEffect(() => {
+                if (!noteOpen || !noteFull) return;
+                let i = 0;
+                const interval = setInterval(() => {
+                    i += 3;
+                    setNoteDisplayed(noteFull.slice(0, i));
+                    if (i >= noteFull.length) clearInterval(interval);
+                }, 15);
+                return () => clearInterval(interval);
+            }, [noteOpen, noteFull]);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!inputValue.trim()) return;
+                const query = inputValue;
+                setInputValue("");
+                setHasAsked(true);
+
+                const intent = detectIntent(query);
+                if (intent.type === 'note') {
+                    runNote(query);
+                } else if (intent.type === 'customer') {
+                    await runCustomerQuery(intent.customerId);
+                } else {
+                    await runDocQuery(query);
+                }
+            };
+
+            const docFileUrl = () => {
+                if (!docResult) return "";
+                return `http://localhost:8000/files/${docResult.doc_name}#page=${docResult.page_number}&toolbar=1`;
+            };
+
+            const InputBox = ({ big }) => (
+                <form onSubmit={handleSubmit} class={`flex w-full ${big ? "" : "mb-3"}`}>
+                    <input
+                        type="text"
+                        autoFocus={big}
+                        class={`flex-1 border border-gray-300 outline-none focus:border-blue-500 ${big ? "rounded-l-2xl p-4 text-lg shadow-2xl" : "rounded-l-lg p-3"}`}
+                        placeholder="Ask about a customer, search documents, or say 'note that down'..."
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        disabled={loading}
+                    />
+                    <button type="submit" disabled={loading || !inputValue.trim()}
+                        class={`bg-gray-900 text-white hover:bg-black disabled:opacity-50 ${big ? "px-8 rounded-r-2xl shadow-2xl text-lg" : "px-6 rounded-r-lg"}`}>
+                        Ask
+                    </button>
+                </form>
+            );
+
+            return (
+                <div class="max-w-5xl mx-auto p-8 relative">
+                    <h1 class="text-2xl font-bold mb-6">Risk Analysis Assistant</h1>
+
+                    {/* Spotlight overlay — shown only before the first query */}
+                    <div class={`spotlight-overlay ${hasAsked ? "spotlight-hidden" : ""}`}>
+                        <div class="w-full max-w-2xl px-4">
+                            <InputBox big={true} />
+                        </div>
+                    </div>
+
+                    {/* Collapsed bar — shown after the first query */}
+                    {hasAsked && <InputBox big={false} />}
+
+                    {caption && (
+                        <div class="anim-slide bg-gray-900 text-white text-sm rounded-lg px-4 py-2 mb-6 flex items-center">
+                            {loading && <span class="mr-2 animate-pulse">●</span>}
+                            <span>{caption}</span>
+                        </div>
+                    )}
+
+                    {error && <p class="text-red-500 mb-4">{error}</p>}
+
+                    {mode === 'customer' && riskData && !loading && (
+                        <div class="anim-fade bg-white p-6 rounded-lg shadow">
+                            <div class="flex items-center justify-between mb-4">
+                                <h2 class="text-2xl font-bold">Customer: {riskData.customer_id}</h2>
+                                <span class={`px-3 py-1 rounded-full text-sm font-bold ${riskData.risk_score === 'High' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                    {riskData.risk_score} Risk
+                                </span>
+                            </div>
+                            <div class="mb-6">
+                                <h3 class="font-semibold text-gray-700 border-b pb-1 mb-2">AI Explanation</h3>
+                                <p class="text-gray-600 leading-relaxed">{riskData.explanation}</p>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-700 border-b pb-1 mb-2">Similar Past Cases</h3>
+                                <ul class="list-disc pl-5 text-sm text-gray-600 space-y-2">
+                                    {riskData.similar_cases.map(sc => (
+                                        <li key={sc.id}>{sc.text} (Ref: {sc.customer_id})</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+                    )}
+
+                    {mode === 'document' && docResult && (
+                        <div class="anim-fade grid grid-cols-2 gap-6">
+                            <div class="bg-white p-2 rounded-lg shadow overflow-hidden" style={{height: '75vh'}}>
+                                <iframe
+                                    ref={pdfIframeRef}
+                                    src={docFileUrl()}
+                                    class="w-full h-full border-0 rounded"
+                                    title="Document viewer"
+                                ></iframe>
+                            </div>
+                            <div class="bg-white p-6 rounded-lg shadow overflow-y-auto" style={{maxHeight: '75vh'}}>
+                                <div class="text-sm text-gray-500 mb-3 border-b pb-2">
+                                    {docResult.doc_name} — page {docResult.page_number}
+                                </div>
+                                <div class="space-y-3">
+                                    {docHistory.map((m, i) => (
+                                        <div key={i} class={`text-sm ${m.role === 'user' ? 'font-semibold text-gray-900' : 'text-gray-700 leading-relaxed'}`}>
+                                            {m.role === 'user' ? `You: ${m.text}` : m.text}
+                                        </div>
+                                    ))}
+                                    {loading && <p class="text-blue-500 animate-pulse text-sm">Thinking...</p>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {mode === 'idle' && hasAsked === false && (
+                        <p class="text-gray-400 mt-32 text-center">Press Ask above to get started.</p>
+                    )}
+
+                    {/* Notepad panel — slides in from the right */}
+                    {noteOpen && (
+                        <div class="anim-note fixed top-0 right-0 h-full w-96 bg-yellow-50 shadow-2xl border-l border-yellow-200 p-6 z-40 overflow-y-auto">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="font-bold text-lg">📝 Notepad</h3>
+                                <button onClick={() => setNoteOpen(false)} class="text-gray-500 hover:text-gray-800">&times;</button>
+                            </div>
+                            <p class="text-gray-800 leading-relaxed whitespace-pre-wrap font-mono text-sm">{noteDisplayed}</p>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

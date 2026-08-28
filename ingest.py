@@ -2,6 +2,15 @@ from pgvector.psycopg import register_vector
 import httpx
 import psycopg
 from sample_data import SAMPLE_CASES
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # For local development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 OLLAMA_URL = "http://localhost:11434"
 DATABASE_URL = "postgresql://risk:risk@localhost:5432/risk_db"
