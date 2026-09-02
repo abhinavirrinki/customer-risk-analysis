@@ -1,7 +1,7 @@
 from pgvector.psycopg import register_vector
 import httpx
 import psycopg
-from sample_data import SAMPLE_CASES
+from generated_sample_data import SAMPLE_CASES
 from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(

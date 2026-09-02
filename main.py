@@ -55,9 +55,10 @@ class GenerateResponse(BaseModel):
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(req: GenerateRequest):
     payload = {
-        "model": "llama3.1:8b",
+        "model": "qwen3:14b",
         "prompt": req.prompt,
         "stream": False,
+        "think": False,
     }
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
